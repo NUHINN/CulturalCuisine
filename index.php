@@ -1,3 +1,39 @@
+<?php
+if (session_status() === PHP_SESSION_NONE) session_start();
+require_once 'dbconnect.php';
+
+$login_error = '';
+// Handle login when the Sign In form is submitted
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password']) && (isset($_POST['email']) || isset($_POST['username']) || isset($_POST['identifier']))) {
+    // Accept username OR email without changing your form fields
+    $identifier = '';
+    if (isset($_POST['identifier']))      $identifier = trim($_POST['identifier']);
+    elseif (isset($_POST['username']))    $identifier = trim($_POST['username']);
+    elseif (isset($_POST['email']))       $identifier = trim($_POST['email']);
+
+    $password = $_POST['password'];
+    // Use MD5 to match your current DB (you can migrate later)
+    $hash = md5($password);
+
+    // Login via username OR email
+    $stmt = $conn->prepare("SELECT UserID FROM users WHERE (Username = ? OR Email = ?) AND PasswordHash = ? LIMIT 1");
+    $stmt->bind_param('sss', $identifier, $identifier, $hash);
+    $stmt->execute();
+    $res = $stmt->get_result();
+
+    if ($row = $res->fetch_assoc()) {
+        $_SESSION['user_id'] = (int)$row['UserID'];
+        $dest = $_SESSION['redirect_after_login'] ?? 'homepage.php';
+        unset($_SESSION['redirect_after_login']);
+        header("Location: $dest");
+        exit;
+    } else {
+        $login_error = 'Invalid username/email or password.';
+        // (Optional) you can echo $login_error inside your Sign In container if you want to show it.
+    }
+    $stmt->close();
+}
+?>
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -44,9 +80,11 @@
 
     <div class="container" id="signIn">
         <h1 class="form-title">Sign In</h1>
-        <form method="post" action="register.php">
+        <!-- CHANGED: post back to THIS page so the PHP above can log in -->
+        <form method="post" action="">
           <div class="input-group">
               <i class="fas fa-envelope"></i>
+              <!-- Keep your 'email' field name: PHP handles email OR username -->
               <input type="email" name="email" id="email" placeholder="Email" required>
               <label for="email">Email</label>
           </div>
