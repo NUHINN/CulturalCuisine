@@ -1,6 +1,7 @@
 <?php
 if (session_status() === PHP_SESSION_NONE) session_start();
 require_once 'dbconnect.php';
+$db = Database::getInstance()->getConnection();
 
 // ----- password change handler -----
 $pw_message = '';
@@ -8,10 +9,10 @@ if (isset($_POST['sb_action']) && $_POST['sb_action'] === 'change_password') {
     if (!isset($_SESSION['user_id'])) {
         $pw_message = 'You need to log in first.';
     } else {
-        $userId = (int)$_SESSION['user_id'];
-        $current  = $_POST['current_password'] ?? '';
-        $new      = $_POST['new_password'] ?? '';
-        $confirm  = $_POST['confirm_password'] ?? '';
+        $userId  = (int)$_SESSION['user_id'];
+        $current = $_POST['current_password'] ?? '';
+        $new     = $_POST['new_password'] ?? '';
+        $confirm = $_POST['confirm_password'] ?? '';
 
         if ($new !== $confirm) {
             $pw_message = 'New password and confirmation do not match.';
@@ -19,17 +20,15 @@ if (isset($_POST['sb_action']) && $_POST['sb_action'] === 'change_password') {
             $pw_message = 'Password must be at least 6 characters.';
         } else {
             $hashCurrent = md5($current);
-            $stmt = $conn->prepare("SELECT UserID FROM users WHERE UserID=? AND PasswordHash=? LIMIT 1");
-            $stmt->bind_param('is', $userId, $hashCurrent);
-            $stmt->execute(); $stmt->store_result();
-            if ($stmt->num_rows === 1) {
-                $stmt->close();
+            $stmt = $db->prepare("SELECT UserID FROM users WHERE UserID = :uid AND PasswordHash = :ph LIMIT 1");
+            $stmt->execute([':uid' => $userId, ':ph' => $hashCurrent]);
+            $user = $stmt->fetch();
+
+            if ($user) {
                 $hashNew = md5($new);
-                $up = $conn->prepare("UPDATE users SET PasswordHash=? WHERE UserID=?");
-                $up->bind_param('si',$hashNew,$userId);
-                if ($up->execute()) $pw_message = 'Password updated successfully.';
-                else $pw_message = 'Could not update password.';
-                $up->close();
+                $up = $db->prepare("UPDATE users SET PasswordHash = :ph WHERE UserID = :uid");
+                $ok = $up->execute([':ph' => $hashNew, ':uid' => $userId]);
+                $pw_message = $ok ? 'Password updated successfully.' : 'Could not update password.';
             } else {
                 $pw_message = 'Current password is incorrect.';
             }
@@ -37,6 +36,7 @@ if (isset($_POST['sb_action']) && $_POST['sb_action'] === 'change_password') {
     }
 }
 ?>
+
 <!DOCTYPE html>
 <html lang="en">
 <head>
