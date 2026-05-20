@@ -1,136 +1,116 @@
 <?php
-session_start();
-require_once 'dbconnect.php';
+require_once __DIR__ . '/auth.php';
 
-// Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['action'])) {
-        $action = $_POST['action'];
+    require_csrf();
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'add' || $action === 'edit') {
+        $recipeId = int_value($_POST['recipeID'] ?? 0);
+        $history = clean_long_text($_POST['history'] ?? '', 5000);
+        $festivals = clean_long_text($_POST['festivals'] ?? '', 3000);
+        $significance = clean_long_text($_POST['significance'] ?? '', 3000);
+
+        if ($recipeId <= 0 || $history === '') {
+            flash('danger', 'Recipe and history are required.');
+            redirect('CulturalDetails.php');
+        }
 
         if ($action === 'add') {
-            // Add a new cultural detail
-            $recipeID = $_POST['recipeID'];
-            $history = $_POST['history'];
-            $festivals = $_POST['festivals'];
-            $significance = $_POST['significance'];
-
-            $stmt = $conn->prepare("INSERT INTO CulturalDetails (RecipeID, History, Festivals, Significance) 
-                                    VALUES (?, ?, ?, ?)");
-            $stmt->bind_param("isss", $recipeID, $history, $festivals, $significance);
-            $stmt->execute();
-            $stmt->close();
-        } elseif ($action === 'edit') {
-            // Edit an existing cultural detail
-            $detailID = $_POST['detailID'];
-            $recipeID = $_POST['recipeID'];
-            $history = $_POST['history'];
-            $festivals = $_POST['festivals'];
-            $significance = $_POST['significance'];
-
-            $stmt = $conn->prepare("UPDATE CulturalDetails 
-                                    SET RecipeID = ?, History = ?, Festivals = ?, Significance = ? 
-                                    WHERE DetailID = ?");
-            $stmt->bind_param("isssi", $recipeID, $history, $festivals, $significance, $detailID);
-            $stmt->execute();
-            $stmt->close();
-        } elseif ($action === 'delete') {
-            // Delete a cultural detail
-            $detailID = $_POST['detailID'];
-
-            $stmt = $conn->prepare("DELETE FROM CulturalDetails WHERE DetailID = ?");
-            $stmt->bind_param("i", $detailID);
-            $stmt->execute();
-            $stmt->close();
+            $ok = run_prepared(
+                'INSERT INTO culturaldetails (RecipeID, History, Festivals, Significance) VALUES (?, ?, ?, ?)',
+                'isss',
+                [$recipeId, $history, $festivals, $significance]
+            );
+            flash($ok ? 'success' : 'danger', $ok ? 'Cultural details added.' : 'Could not add cultural details.');
+        } else {
+            $detailId = int_value($_POST['detailID'] ?? 0);
+            $ok = $detailId > 0 && run_prepared(
+                'UPDATE culturaldetails SET RecipeID = ?, History = ?, Festivals = ?, Significance = ? WHERE DetailID = ?',
+                'isssi',
+                [$recipeId, $history, $festivals, $significance, $detailId]
+            );
+            flash($ok ? 'success' : 'danger', $ok ? 'Cultural details updated.' : 'Could not update cultural details.');
         }
+        redirect('CulturalDetails.php');
+    }
+
+    if ($action === 'delete') {
+        $detailId = int_value($_POST['detailID'] ?? 0);
+        $ok = $detailId > 0 && run_prepared('DELETE FROM culturaldetails WHERE DetailID = ?', 'i', [$detailId]);
+        flash($ok ? 'success' : 'danger', $ok ? 'Cultural detail deleted.' : 'Could not delete cultural detail.');
+        redirect('CulturalDetails.php');
     }
 }
 
-// Fetch all cultural details
-$result = $conn->query("SELECT * FROM CulturalDetails");
-$culturalDetails = $result->fetch_all(MYSQLI_ASSOC);
+$details = fetch_all_prepared(
+    'SELECT c.DetailID, c.RecipeID, c.History, c.Festivals, c.Significance, r.Name AS RecipeName
+     FROM culturaldetails c
+     LEFT JOIN recipes r ON r.RecipeID = c.RecipeID
+     ORDER BY c.DetailID DESC'
+);
+$recipes = get_recipe_options();
 
-// Fetch all recipes for the dropdown
-$recipesResult = $conn->query("SELECT RecipeID, Name FROM Recipes");
-$recipes = $recipesResult->fetch_all(MYSQLI_ASSOC);
+$pageTitle = 'Cultural Details Management | ' . APP_NAME;
+require __DIR__ . '/header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Cultural Details Management</title>
+<div class="page-shell">
+    <section class="content-card mb-4">
+        <span class="eyebrow"><i class="fa-solid fa-earth-asia"></i> Management</span>
+        <h1 class="section-title mt-2">Cultural details</h1>
+        <p class="section-copy mb-0">Document the history, festivals, and cultural significance that make a recipe more than a list of ingredients.</p>
+    </section>
 
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-
-    <!-- Custom CSS -->
-    <style>
-        body {
-            background-color: #f8f9fa;
-            font-family: 'Arial', sans-serif;
-        }
-        .container {
-            margin-top: 30px;
-        }
-        .table th, .table td {
-            text-align: center;
-        }
-        .table {
-            background-color: #e9ecef; /* Ash color for the table */
-        }
-        .table th {
-            background-color: #343a40; /* Black color for column headers */
-            color: white;
-        }
-        .table td {
-            background-color: #f8f9fa; /* Light background for data cells */
-        }
-        .btn-custom {
-            background-color: #007bff;
-            color: white;
-        }
-        .btn-custom:hover {
-            background-color: #0056b3;
-        }
-        .btn-sm {
-            padding: 5px 10px;
-        }
-        .card {
-            margin-top: 30px;
-        }
-        h1 {
-            color: #007bff; /* Blue color for the main header */
-        }
-        .card-header {
-            background-color: #007bff;
-            color: white;
-            font-weight: bold;
-        }
-        .form-label {
-            font-weight: bold;
-        }
-        .form-control {
-            margin-bottom: 10px;
-        }
-    </style>
-</head>
-<body>
-
-    <div class="container">
-        <h1 class="text-center my-4">Cultural Details Management</h1>
-
-        <!-- Display Cultural Details -->
-        <div class="card">
-            <div class="card-header">
-                <h3>Cultural Details List</h3>
+    <section class="form-card mb-5">
+        <h2 class="h4 fw-bold mb-3">Add cultural detail</h2>
+        <form method="post" class="row g-3">
+            <?php echo csrf_field(); ?>
+            <input type="hidden" name="action" value="add">
+            <div class="col-md-4">
+                <label class="form-label" for="recipeID">Recipe</label>
+                <select class="form-select" id="recipeID" name="recipeID" required>
+                    <option value="">Select recipe</option>
+                    <?php foreach ($recipes as $recipe): ?>
+                        <option value="<?php echo (int)$recipe['RecipeID']; ?>"><?php echo e($recipe['Name']); ?></option>
+                    <?php endforeach; ?>
+                </select>
             </div>
-            <div class="card-body">
-                <table class="table table-bordered">
+            <div class="col-12">
+                <label class="form-label" for="history">History</label>
+                <textarea class="form-control" id="history" name="history" required></textarea>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label" for="festivals">Festivals</label>
+                <textarea class="form-control" id="festivals" name="festivals"></textarea>
+            </div>
+            <div class="col-md-6">
+                <label class="form-label" for="significance">Significance</label>
+                <textarea class="form-control" id="significance" name="significance"></textarea>
+            </div>
+            <div class="col-12">
+                <button class="btn btn-primary" type="submit"><i class="fa-solid fa-plus me-2"></i>Add detail</button>
+            </div>
+        </form>
+    </section>
+
+    <section>
+        <div class="section-heading">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-list"></i> Records</span>
+                <h2 class="section-title">Culture notes</h2>
+            </div>
+        </div>
+
+        <?php if (empty($details)): ?>
+            <div class="empty-state">No cultural details have been added yet.</div>
+        <?php else: ?>
+            <div class="table-responsive table-modern">
+                <table class="table align-middle mb-0">
                     <thead>
                         <tr>
-                            <th>DetailID</th>
-                            <th>RecipeID</th>
+                            <th>ID</th>
+                            <th>Recipe</th>
                             <th>History</th>
                             <th>Festivals</th>
                             <th>Significance</th>
@@ -138,39 +118,42 @@ $recipes = $recipesResult->fetch_all(MYSQLI_ASSOC);
                         </tr>
                     </thead>
                     <tbody>
-                        <?php foreach ($culturalDetails as $detail): ?>
+                        <?php foreach ($details as $detail): ?>
                             <tr>
-                                <td><?php echo htmlspecialchars($detail['DetailID']); ?></td>
-                                <td><?php echo htmlspecialchars($detail['RecipeID']); ?></td>
-                                <td><?php echo htmlspecialchars($detail['History']); ?></td>
-                                <td><?php echo htmlspecialchars($detail['Festivals']); ?></td>
-                                <td><?php echo htmlspecialchars($detail['Significance']); ?></td>
+                                <td>#<?php echo (int)$detail['DetailID']; ?></td>
+                                <td class="fw-bold"><?php echo e($detail['RecipeName'] ?? 'Unknown recipe'); ?></td>
+                                <td><?php echo e(truncate_text($detail['History'], 90)); ?></td>
+                                <td><?php echo e(truncate_text($detail['Festivals'], 70)); ?></td>
+                                <td><?php echo e(truncate_text($detail['Significance'], 70)); ?></td>
                                 <td>
-                                    <!-- Edit form -->
-                                    <form action="" method="POST" style="display:inline-block;">
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#editDetail<?php echo (int)$detail['DetailID']; ?>">Edit</button>
+                                        <form method="post" class="js-confirm-delete">
+                                            <?php echo csrf_field(); ?>
+                                            <input type="hidden" name="action" value="delete">
+                                            <input type="hidden" name="detailID" value="<?php echo (int)$detail['DetailID']; ?>">
+                                            <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr class="collapse" id="editDetail<?php echo (int)$detail['DetailID']; ?>">
+                                <td colspan="6">
+                                    <form method="post" class="row g-2">
+                                        <?php echo csrf_field(); ?>
                                         <input type="hidden" name="action" value="edit">
-                                        <input type="hidden" name="detailID" value="<?php echo $detail['DetailID']; ?>">
-                                        <select name="recipeID" class="form-control" required>
-                                            <option value="<?php echo htmlspecialchars($detail['RecipeID']); ?>" selected><?php echo htmlspecialchars($detail['RecipeID']); ?></option>
-                                            <?php
-                                            // Fetch RecipeIDs for the dropdown
-                                            $recipes = $conn->query("SELECT RecipeID, Name FROM Recipes");
-                                            while ($row = $recipes->fetch_assoc()) {
-                                                echo '<option value="' . $row['RecipeID'] . '">' . $row['Name'] . '</option>';
-                                            }
-                                            ?>
-                                        </select>
-                                        <input type="text" name="history" value="<?php echo htmlspecialchars($detail['History']); ?>" class="form-control" required>
-                                        <input type="text" name="festivals" value="<?php echo htmlspecialchars($detail['Festivals']); ?>" class="form-control" required>
-                                        <input type="text" name="significance" value="<?php echo htmlspecialchars($detail['Significance']); ?>" class="form-control" required>
-                                        <button type="submit" class="btn btn-warning btn-sm">Update</button>
-                                    </form>
-
-                                    <!-- Delete form -->
-                                    <form action="" method="POST" style="display:inline-block;">
-                                        <input type="hidden" name="action" value="delete">
-                                        <input type="hidden" name="detailID" value="<?php echo $detail['DetailID']; ?>">
-                                        <button type="submit" class="btn btn-danger btn-sm">Delete</button>
+                                        <input type="hidden" name="detailID" value="<?php echo (int)$detail['DetailID']; ?>">
+                                        <div class="col-md-4">
+                                            <select class="form-select" name="recipeID" required>
+                                                <?php foreach ($recipes as $recipe): ?>
+                                                    <option value="<?php echo (int)$recipe['RecipeID']; ?>" <?php echo (int)$recipe['RecipeID'] === (int)$detail['RecipeID'] ? 'selected' : ''; ?>><?php echo e($recipe['Name']); ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        <div class="col-12"><textarea class="form-control" name="history" required><?php echo e($detail['History']); ?></textarea></div>
+                                        <div class="col-md-6"><textarea class="form-control" name="festivals"><?php echo e($detail['Festivals']); ?></textarea></div>
+                                        <div class="col-md-6"><textarea class="form-control" name="significance"><?php echo e($detail['Significance']); ?></textarea></div>
+                                        <div class="col-12"><button class="btn btn-primary btn-sm" type="submit">Save changes</button></div>
                                     </form>
                                 </td>
                             </tr>
@@ -178,53 +161,8 @@ $recipes = $recipesResult->fetch_all(MYSQLI_ASSOC);
                     </tbody>
                 </table>
             </div>
-        </div>
+        <?php endif; ?>
+    </section>
+</div>
 
-        <!-- Add Cultural Detail Form -->
-        <div class="card">
-            <div class="card-header">
-                <h3>Add New Cultural Detail</h3>
-            </div>
-            <div class="card-body">
-                <form action="" method="POST">
-                    <input type="hidden" name="action" value="add">
-                    
-                    <!-- RecipeID Dropdown -->
-                    <div class="mb-3">
-                        <label for="recipeID" class="form-label">RecipeID</label>
-                        <select name="recipeID" class="form-control" required>
-                            <option value="">Select Recipe</option>
-                            <?php
-                            // Fetch RecipeIDs for the dropdown
-                            $recipes = $conn->query("SELECT RecipeID, Name FROM Recipes");
-                            while ($row = $recipes->fetch_assoc()) {
-                                echo '<option value="' . $row['RecipeID'] . '">' . $row['Name'] . '</option>';
-                            }
-                            ?>
-                        </select>
-                    </div>
-                    
-                    <!-- Cultural Details -->
-                    <div class="mb-3">
-                        <label for="history" class="form-label">History</label>
-                        <input type="text" class="form-control" id="history" name="history" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="festivals" class="form-label">Festivals</label>
-                        <input type="text" class="form-control" id="festivals" name="festivals" required>
-                    </div>
-                    <div class="mb-3">
-                        <label for="significance" class="form-label">Significance</label>
-                        <input type="text" class="form-control" id="significance" name="significance">
-                    </div>
-                    <button type="submit" class="btn btn-custom">Add Cultural Detail</button>
-                </form>
-            </div>
-        </div>
-    </div>
-
-    <!-- Bootstrap JS and dependencies -->
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.3/dist/umd/popper.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.min.js"></script>
-</body>
-</html>
+<?php require __DIR__ . '/footer.php'; ?>

@@ -1,266 +1,185 @@
 <?php
-// search.php
-session_start();
-require_once 'dbconnect.php'; // uses your existing MySQL connection
+require_once __DIR__ . '/functions.php';
 
-// 1) Read filters safely
-$q      = isset($_GET['q']) ? trim($_GET['q']) : '';
-$region = isset($_GET['region']) ? trim($_GET['region']) : '';
-$tag    = isset($_GET['tag']) ? trim($_GET['tag']) : '';
+$q = clean_text($_GET['q'] ?? '', 120);
+$region = clean_text($_GET['region'] ?? '', 80);
+$cuisine = clean_text($_GET['cuisine'] ?? '', 80);
+$tag = clean_text($_GET['tag'] ?? '', 80);
+$rating = int_value($_GET['rating'] ?? 0, 0);
+$sort = clean_text($_GET['sort'] ?? 'highest_rated', 40);
 
-// 2) Build SQL dynamically + prepared params (optimized: GROUP_CONCAT tags)
-$sql = "
-  SELECT 
-    r.RecipeID,
-    r.Name,
-    r.Description,
-    r.Region,
-    r.CuisineType,
-    COALESCE(AVG(rv.Rating), 0) AS AvgRating,
-    GROUP_CONCAT(DISTINCT t.TagName ORDER BY t.TagName SEPARATOR ',') AS Tags
-  FROM recipes r
-  LEFT JOIN recipetags t ON t.RecipeID = r.RecipeID
-  LEFT JOIN reviews rv   ON rv.RecipeID = r.RecipeID
-  WHERE 1=1
-";
-
+$where = ['1=1'];
 $types = '';
 $params = [];
 
-// Name/keyword: match against recipe name or description
 if ($q !== '') {
-  $sql .= " AND (r.Name LIKE CONCAT('%', ?, '%') OR r.Description LIKE CONCAT('%', ?, '%'))";
-  $types .= 'ss';
-  $params[] = $q;
-  $params[] = $q;
+    $where[] = '(r.Name LIKE CONCAT("%", ?, "%")
+        OR r.Description LIKE CONCAT("%", ?, "%")
+        OR r.Region LIKE CONCAT("%", ?, "%")
+        OR r.CuisineType LIKE CONCAT("%", ?, "%")
+        OR EXISTS (SELECT 1 FROM recipetags tq WHERE tq.RecipeID = r.RecipeID AND tq.TagName LIKE CONCAT("%", ?, "%")))';
+    $types .= 'sssss';
+    array_push($params, $q, $q, $q, $q, $q);
 }
 
-// Exact region match (switch to LIKE if you prefer partial)
 if ($region !== '') {
-  $sql .= " AND r.Region = ?";
-  $types .= 's';
-  $params[] = $region;
+    $where[] = 'r.Region = ?';
+    $types .= 's';
+    $params[] = $region;
 }
 
-// Exact tag match
+if ($cuisine !== '') {
+    $where[] = 'r.CuisineType = ?';
+    $types .= 's';
+    $params[] = $cuisine;
+}
+
 if ($tag !== '') {
-  $sql .= " AND t.TagName = ?";
-  $types .= 's';
-  $params[] = $tag;
+    $where[] = 'EXISTS (SELECT 1 FROM recipetags tf WHERE tf.RecipeID = r.RecipeID AND tf.TagName = ?)';
+    $types .= 's';
+    $params[] = $tag;
 }
 
-$sql .= "
-  GROUP BY r.RecipeID, r.Name, r.Description, r.Region, r.CuisineType
-  ORDER BY AvgRating DESC, r.Name ASC
-";
-
-// 3) Prepare & execute
-$stmt = $conn->prepare($sql);
-if (!$stmt) {
-  die('Prepare failed: ' . htmlspecialchars($conn->error));
-}
-if (!empty($params)) {
-  $stmt->bind_param($types, ...$params);
-}
-$stmt->execute();
-$result = $stmt->get_result();
-
-// 4) Distinct Regions and Tags for dropdowns
-$regions = [];
-$tags = [];
-
-$regRes = $conn->query("SELECT DISTINCT Region FROM recipes WHERE Region IS NOT NULL AND Region <> '' ORDER BY Region ASC");
-if ($regRes) {
-  while ($r = $regRes->fetch_assoc()) $regions[] = $r['Region'];
+if ($rating >= 1 && $rating <= 5) {
+    $where[] = 'COALESCE((SELECT AVG(rv2.Rating) FROM reviews rv2 WHERE rv2.RecipeID = r.RecipeID), 0) >= ?';
+    $types .= 'i';
+    $params[] = $rating;
 }
 
-$tagRes = $conn->query("SELECT DISTINCT TagName FROM recipetags WHERE TagName IS NOT NULL AND TagName <> '' ORDER BY TagName ASC");
-if ($tagRes) {
-  while ($trow = $tagRes->fetch_assoc()) $tags[] = $trow['TagName'];
-}
+$orderBy = match ($sort) {
+    'name' => 'r.Name ASC',
+    'newest' => db_has_column('recipes', 'CreatedAt') ? 'r.CreatedAt DESC, r.RecipeID DESC' : 'r.RecipeID DESC',
+    default => 'AvgRating DESC, ReviewCount DESC, r.Name ASC',
+};
+
+$recipes = fetch_all_prepared(
+    'SELECT ' . recipe_select_columns('r') . ',
+        COALESCE((SELECT AVG(rv.Rating) FROM reviews rv WHERE rv.RecipeID = r.RecipeID), 0) AS AvgRating,
+        (SELECT COUNT(*) FROM reviews rv WHERE rv.RecipeID = r.RecipeID) AS ReviewCount,
+        (SELECT GROUP_CONCAT(DISTINCT t.TagName ORDER BY t.TagName SEPARATOR ",") FROM recipetags t WHERE t.RecipeID = r.RecipeID) AS Tags
+     FROM recipes r
+     WHERE ' . implode(' AND ', $where) . '
+     ORDER BY ' . $orderBy,
+    $types,
+    $params
+);
+
+$regions = fetch_all_prepared("SELECT DISTINCT Region FROM recipes WHERE Region IS NOT NULL AND Region <> '' ORDER BY Region ASC");
+$cuisines = fetch_all_prepared("SELECT DISTINCT CuisineType FROM recipes WHERE CuisineType IS NOT NULL AND CuisineType <> '' ORDER BY CuisineType ASC");
+$tags = fetch_all_prepared("SELECT DISTINCT TagName FROM recipetags WHERE TagName IS NOT NULL AND TagName <> '' ORDER BY TagName ASC");
+
+$pageTitle = 'Browse Recipes | ' . APP_NAME;
+require __DIR__ . '/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8" />
-  <title>Search Recipes</title>
-  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
-  <!-- Match your site’s typography -->
-  <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
 
-  <style>
-    :root{
-      --brand1:#ffcc00;
-      --brand2:#ff9900;
-      --ink:#333;
-      --muted:#666;
-      --card:#ffffff;
-      --pill-bg:#fff3cd;
-      --pill-text:#7a5d00;
-      --ok:#2e7d32;
-      --border:#eee;
-      --shadow:0 10px 24px rgba(0,0,0,.12);
-    }
-    *{box-sizing:border-box}
-    body{
-      margin:0; font-family:'Roboto', sans-serif; color:var(--ink);
-      background: linear-gradient(120deg, var(--brand1), var(--brand2));
-      background-attachment: fixed;
-      min-height:100vh;
-    }
-    /* Header bar to match homepage vibe */
-    .topbar{
-      background: linear-gradient(120deg, var(--brand1), var(--brand2));
-      color:#000; padding:14px 20px; display:flex; align-items:center; justify-content:space-between;
-      position:sticky; top:0; z-index:5; box-shadow:0 4px 8px rgba(0,0,0,.15);
-    }
-    .logo{font-weight:700; font-size:18px;}
-    .topbar a{ color:#000; text-decoration:none; background:rgba(255,255,255,.35); padding:8px 12px; border-radius:8px; }
-    .topbar a:hover{ background:rgba(255,255,255,.55); }
-
-    /* Card container */
-    .page{
-      max-width:1100px; margin:26px auto; padding:0 16px;
-    }
-    .card{
-      background:var(--card); border-radius:14px; box-shadow:var(--shadow); border:1px solid var(--border);
-    }
-
-    /* Search panel */
-    .search-wrap{ padding:18px; }
-    .search-title{ margin:0 0 10px; font-size:22px; color:#000; }
-    .grid{ display:grid; grid-template-columns: 1.2fr 0.8fr 0.8fr auto; gap:10px; }
-    .grid input[type=text], .grid select{
-      width:100%; padding:10px 12px; border:1px solid #ddd; border-radius:10px; font-size:14px;
-      background:#fff;
-    }
-    .btn{
-      padding:10px 16px; border:none; border-radius:10px; cursor:pointer; font-weight:600;
-      background:#333; color:#fff; transition:.2s; white-space:nowrap;
-    }
-    .btn:hover{ background:#444; }
-    .btn-light{
-      background:#fff; color:#333; border:1px solid #ddd;
-    }
-    .btn-light:hover{ background:#f8f8f8; }
-    .filters-row{ display:flex; align-items:center; gap:8px; margin-top:10px; flex-wrap:wrap; }
-    .chip{
-      background:#fff; border:1px solid #eee; border-radius:999px; padding:6px 10px; font-size:12px; color:var(--muted);
-    }
-
-    /* Results */
-    .section{ margin-top:18px; }
-    .section h2{ margin:0 0 10px; color:#000; }
-    .table-wrap{ overflow:auto; border-radius:14px; box-shadow:var(--shadow); }
-    table{ width:100%; border-collapse:collapse; background:#fff; }
-    thead th{
-      position:sticky; top:0; z-index:1; text-align:left; padding:12px; background:#222; color:#fff; font-weight:600;
-    }
-    tbody td{ padding:12px; border-top:1px solid #f0f0f0; vertical-align:top; }
-    tbody tr:nth-child(even){ background:#fafafa; }
-    tbody tr:hover{ background:#fff8e1; }
-    .muted{ color:var(--muted); font-size:13px; }
-    .pills{ display:flex; gap:6px; flex-wrap:wrap; }
-    .pill{ background:var(--pill-bg); color:var(--pill-text); border-radius:999px; padding:4px 8px; font-size:12px; }
-
-    /* Responsive */
-    @media (max-width: 900px){
-      .grid{ grid-template-columns: 1fr; }
-    }
-  </style>
-</head>
-<body>
-
-  <div class="topbar">
-    <div class="logo">Cultural Cuisine Explorer</div>
-    <div><a href="homepage.php">← Back to Homepage</a></div>
-  </div>
-
-  <div class="page">
-    <div class="card search-wrap">
-      <h1 class="search-title">Search Recipes</h1>
-      <form method="get" action="search.php">
-        <div class="grid">
-          <input type="text" name="q" placeholder="Search by name or description…" value="<?php echo htmlspecialchars($q); ?>" />
-          <select name="region">
-            <option value="">All Regions</option>
-            <?php foreach ($regions as $r): ?>
-              <option value="<?php echo htmlspecialchars($r); ?>" <?php echo $region===$r ? 'selected' : ''; ?>>
-                <?php echo htmlspecialchars(ucfirst($r)); ?>
-              </option>
-            <?php endforeach; ?>
-          </select>
-          <select name="tag">
-            <option value="">All Tags</option>
-            <?php foreach ($tags as $tg): ?>
-              <option value="<?php echo htmlspecialchars($tg); ?>" <?php echo $tag===$tg ? 'selected' : ''; ?>>
-                <?php echo htmlspecialchars($tg); ?>
-              </option>
-            <?php endforeach; ?>
-          </select>
-          <div style="display:flex; gap:8px;">
-            <button class="btn" type="submit">Search</button>
-            <a class="btn btn-light" href="search.php">Reset</a>
-          </div>
+<div class="page-shell">
+    <section class="content-card mb-4">
+        <div class="section-heading">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-magnifying-glass"></i> Browse</span>
+                <h1 class="section-title">Find recipes by flavor and culture</h1>
+                <p class="section-copy mb-0">Search names, descriptions, regions, cuisine types, and tags. Then filter by rating or sort the results for quick discovery.</p>
+            </div>
         </div>
 
-        <!-- Active filter chips -->
-        <div class="filters-row">
-          <?php if ($q !== ''): ?><span class="chip">Query: “<?php echo htmlspecialchars($q); ?>”</span><?php endif; ?>
-          <?php if ($region !== ''): ?><span class="chip">Region: <?php echo htmlspecialchars(ucfirst($region)); ?></span><?php endif; ?>
-          <?php if ($tag !== ''): ?><span class="chip">Tag: <?php echo htmlspecialchars($tag); ?></span><?php endif; ?>
-        </div>
-      </form>
-    </div>
-
-    <div class="section">
-      <h2>Results</h2>
-      <div class="table-wrap card">
-        <table>
-          <thead>
-            <tr>
-              <th>Recipe</th>
-              <th>Region</th>
-              <th>Cuisine Type</th>
-              <th>Average Rating</th>
-              <th>Tags</th>
-            </tr>
-          </thead>
-          <tbody>
-          <?php if ($result && $result->num_rows > 0): ?>
-            <?php while ($row = $result->fetch_assoc()): ?>
-              <?php
-                $tagList = [];
-                if (!empty($row['Tags'])) {
-                  // explode the aggregated tags
-                  $tagList = array_filter(array_map('trim', explode(',', $row['Tags'])));
-                }
-              ?>
-              <tr>
-                <td>
-                  <strong><?php echo htmlspecialchars($row['Name']); ?></strong><br>
-                  <span class="muted"><?php echo nl2br(htmlspecialchars($row['Description'])); ?></span>
-                </td>
-                <td><?php echo htmlspecialchars($row['Region']); ?></td>
-                <td><?php echo htmlspecialchars($row['CuisineType']); ?></td>
-                <td><?php echo number_format((float)$row['AvgRating'], 1); ?>/5</td>
-                <td>
-                  <div class="pills">
-                    <?php foreach ($tagList as $tg): ?>
-                      <span class="pill"><?php echo htmlspecialchars($tg); ?></span>
+        <form method="get" action="search.php" class="filter-bar">
+            <div>
+                <label class="form-label" for="q">Search</label>
+                <input class="form-control" type="search" id="q" name="q" value="<?php echo e($q); ?>" placeholder="Biryani, festive, spicy...">
+            </div>
+            <div>
+                <label class="form-label" for="region">Region</label>
+                <select class="form-select" id="region" name="region">
+                    <option value="">All regions</option>
+                    <?php foreach ($regions as $row): ?>
+                        <option value="<?php echo e($row['Region']); ?>" <?php echo $region === $row['Region'] ? 'selected' : ''; ?>><?php echo e($row['Region']); ?></option>
                     <?php endforeach; ?>
-                  </div>
-                </td>
-              </tr>
-            <?php endwhile; ?>
-          <?php else: ?>
-            <tr><td colspan="5">No recipes found. Try different filters.</td></tr>
-          <?php endif; ?>
-          </tbody>
-        </table>
-      </div>
-    </div>
-  </div>
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="cuisine">Cuisine</label>
+                <select class="form-select" id="cuisine" name="cuisine">
+                    <option value="">All cuisines</option>
+                    <?php foreach ($cuisines as $row): ?>
+                        <option value="<?php echo e($row['CuisineType']); ?>" <?php echo $cuisine === $row['CuisineType'] ? 'selected' : ''; ?>><?php echo e($row['CuisineType']); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="tag">Tag</label>
+                <select class="form-select" id="tag" name="tag">
+                    <option value="">All tags</option>
+                    <?php foreach ($tags as $row): ?>
+                        <option value="<?php echo e($row['TagName']); ?>" <?php echo $tag === $row['TagName'] ? 'selected' : ''; ?>><?php echo e($row['TagName']); ?></option>
+                    <?php endforeach; ?>
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="rating">Rating</label>
+                <select class="form-select" id="rating" name="rating">
+                    <option value="0">Any rating</option>
+                    <?php for ($i = 5; $i >= 1; $i--): ?>
+                        <option value="<?php echo $i; ?>" <?php echo $rating === $i ? 'selected' : ''; ?>><?php echo $i; ?>+ stars</option>
+                    <?php endfor; ?>
+                </select>
+            </div>
+            <div>
+                <label class="form-label" for="sort">Sort</label>
+                <select class="form-select" id="sort" name="sort">
+                    <option value="highest_rated" <?php echo $sort === 'highest_rated' ? 'selected' : ''; ?>>Highest rated</option>
+                    <option value="newest" <?php echo $sort === 'newest' ? 'selected' : ''; ?>>Newest</option>
+                    <option value="name" <?php echo $sort === 'name' ? 'selected' : ''; ?>>Name</option>
+                </select>
+            </div>
+            <div class="d-flex gap-2">
+                <button class="btn btn-primary" type="submit"><i class="fa-solid fa-filter me-2"></i>Apply</button>
+                <a class="btn btn-outline-secondary" href="search.php">Reset</a>
+            </div>
+        </form>
+    </section>
 
-</body>
-</html>
+    <section>
+        <div class="section-heading">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-list"></i> Results</span>
+                <h2 class="section-title"><?php echo count($recipes); ?> recipe<?php echo count($recipes) === 1 ? '' : 's'; ?> found</h2>
+            </div>
+        </div>
+
+        <?php if (empty($recipes)): ?>
+            <div class="empty-state">
+                <h3 class="h5 fw-bold">No recipes match those filters.</h3>
+                <p class="mb-0">Try a broader keyword, remove the rating filter, or add more recipe data from the management pages.</p>
+            </div>
+        <?php else: ?>
+            <div class="cards-grid">
+                <?php foreach ($recipes as $recipe): ?>
+                    <?php $tagList = array_filter(array_map('trim', explode(',', (string)($recipe['Tags'] ?? '')))); ?>
+                    <article class="recipe-card">
+                        <img class="recipe-thumb" src="<?php echo e(recipe_image($recipe['ImagePath'] ?? null)); ?>" alt="<?php echo e($recipe['Name']); ?>">
+                        <div class="recipe-card-body">
+                            <div class="recipe-meta">
+                                <?php if (!empty($recipe['Region'])): ?><span class="meta-pill"><i class="fa-solid fa-location-dot"></i><?php echo e($recipe['Region']); ?></span><?php endif; ?>
+                                <?php if (!empty($recipe['CuisineType'])): ?><span class="meta-pill"><i class="fa-solid fa-bowl-rice"></i><?php echo e($recipe['CuisineType']); ?></span><?php endif; ?>
+                            </div>
+                            <h3 class="recipe-title"><?php echo e($recipe['Name']); ?></h3>
+                            <p class="muted-text flex-grow-1"><?php echo e(truncate_text($recipe['Description'] ?? '', 145)); ?></p>
+                            <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
+                                <span><?php echo render_stars((float)$recipe['AvgRating']); ?></span>
+                                <span class="small muted-text"><?php echo number_format((float)$recipe['AvgRating'], 1); ?> / 5</span>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 mb-3">
+                                <?php foreach (array_slice($tagList, 0, 4) as $tagName): ?>
+                                    <a class="tag-pill" href="search.php?tag=<?php echo urlencode($tagName); ?>"><?php echo e($tagName); ?></a>
+                                <?php endforeach; ?>
+                            </div>
+                            <a class="btn btn-primary mt-auto" href="recipe_detail.php?id=<?php echo (int)$recipe['RecipeID']; ?>">Open recipe</a>
+                        </div>
+                    </article>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </section>
+</div>
+
+<?php require __DIR__ . '/footer.php'; ?>

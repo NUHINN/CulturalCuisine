@@ -1,230 +1,214 @@
 <?php
-session_start();
-require_once 'dbconnect.php';
+require_once __DIR__ . '/auth.php';
 
-// Handle form submissions
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
-    if (isset($_POST['action'])) {
-        $action = $_POST['action'];
+    require_csrf();
+    $action = $_POST['action'] ?? '';
+
+    if ($action === 'add' || $action === 'edit') {
+        $userId = int_value($_POST['userID'] ?? 0);
+        $recipeId = int_value($_POST['recipeID'] ?? 0);
+
+        if ($userId <= 0 || $recipeId <= 0) {
+            flash('danger', 'User and recipe are required.');
+            redirect('savedrecipe.php');
+        }
 
         if ($action === 'add') {
-            // Add a new saved recipe
-            $userID = $_POST['userID'];
-            $recipeID = $_POST['recipeID'];
-            $saveDate = date('Y-m-d H:i:s');  // Current date and time
-
-            $stmt = $conn->prepare("INSERT INTO SavedRecipes (UserID, RecipeID, SaveDate) 
-                                    VALUES (?, ?, ?)");
-            $stmt->bind_param("iis", $userID, $recipeID, $saveDate);
-            $stmt->execute();
-            $stmt->close();
-        } elseif ($action === 'edit') {
-            // Edit an existing saved recipe
-            $savedID = $_POST['savedID'];
-            $userID = $_POST['userID'];
-            $recipeID = $_POST['recipeID'];
-
-            $stmt = $conn->prepare("UPDATE SavedRecipes 
-                                    SET UserID = ?, RecipeID = ? 
-                                    WHERE SavedID = ?");
-            $stmt->bind_param("iii", $userID, $recipeID, $savedID);
-            $stmt->execute();
-            $stmt->close();
-        } elseif ($action === 'delete') {
-            // Delete a saved recipe
-            $savedID = $_POST['savedID'];
-
-            $stmt = $conn->prepare("DELETE FROM SavedRecipes WHERE SavedID = ?");
-            $stmt->bind_param("i", $savedID);
-            $stmt->execute();
-            $stmt->close();
+            $ok = save_recipe_for_user($userId, $recipeId);
+            flash($ok ? 'success' : 'danger', $ok ? 'Saved recipe added.' : 'Could not save recipe.');
+        } else {
+            $savedId = int_value($_POST['savedID'] ?? 0);
+            $ok = $savedId > 0 && run_prepared(
+                'UPDATE savedrecipes SET UserID = ?, RecipeID = ? WHERE SavedID = ?',
+                'iii',
+                [$userId, $recipeId, $savedId]
+            );
+            flash($ok ? 'success' : 'danger', $ok ? 'Saved recipe updated.' : 'Could not update saved recipe.');
         }
+        redirect('savedrecipe.php');
+    }
+
+    if ($action === 'delete') {
+        $savedId = int_value($_POST['savedID'] ?? 0);
+        $ok = $savedId > 0 && run_prepared('DELETE FROM savedrecipes WHERE SavedID = ?', 'i', [$savedId]);
+        flash($ok ? 'success' : 'danger', $ok ? 'Saved recipe removed.' : 'Could not remove saved recipe.');
+        redirect('savedrecipe.php');
     }
 }
 
-// Fetch all saved recipes
-$result = $conn->query("SELECT * FROM SavedRecipes");
-$savedRecipes = $result->fetch_all(MYSQLI_ASSOC);
+$currentUserId = (int)current_user_id();
+$mySavedRecipes = fetch_all_prepared(
+    'SELECT s.SavedID, s.SaveDate, ' . recipe_select_columns('r') . ',
+        COALESCE((SELECT AVG(rv.Rating) FROM reviews rv WHERE rv.RecipeID = r.RecipeID), 0) AS AvgRating
+     FROM savedrecipes s
+     JOIN recipes r ON r.RecipeID = s.RecipeID
+     WHERE s.UserID = ?
+     ORDER BY s.SaveDate DESC',
+    'i',
+    [$currentUserId]
+);
 
-// Fetch all users for the dropdown
-$usersResult = $conn->query("SELECT UserID, Username FROM users");
-$users = $usersResult->fetch_all(MYSQLI_ASSOC);
+$savedRecords = fetch_all_prepared(
+    'SELECT s.SavedID, s.UserID, s.RecipeID, s.SaveDate, u.Username, r.Name AS RecipeName
+     FROM savedrecipes s
+     LEFT JOIN users u ON u.UserID = s.UserID
+     LEFT JOIN recipes r ON r.RecipeID = s.RecipeID
+     ORDER BY s.SaveDate DESC, s.SavedID DESC'
+);
+$users = get_user_options();
+$recipes = get_recipe_options();
 
-// Fetch all recipes for the dropdown
-$recipesResult = $conn->query("SELECT RecipeID, Name FROM Recipes");
-$recipes = $recipesResult->fetch_all(MYSQLI_ASSOC);
+$pageTitle = 'Saved Recipes | ' . APP_NAME;
+require __DIR__ . '/header.php';
 ?>
 
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Saved Recipes Management</title>
+<div class="page-shell">
+    <section class="content-card mb-4">
+        <span class="eyebrow"><i class="fa-solid fa-bookmark"></i> Collection</span>
+        <h1 class="section-title mt-2">Saved recipes</h1>
+        <p class="section-copy mb-0">A personal saved list for presentation browsing, plus an admin-style table for maintaining saved recipe records.</p>
+    </section>
 
-    <!-- Bootstrap CSS -->
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/css/bootstrap.min.css" rel="stylesheet">
-
-    <!-- Custom CSS -->
-    <style>
-        body {
-            background-color: #f8f9fa;
-            font-family: 'Arial', sans-serif;
-        }
-        .container {
-            max-width: 1200px; /* Limit the width of the content */
-            margin: 0 auto; /* Center the content */
-            padding: 20px;
-        }
-        h1 {
-            color: #007bff; /* Blue color for the main header */
-            text-align: center;
-            margin-top: 30px;
-        }
-        h2 {
-            margin-top: 20px;
-        }
-        .table {
-            background-color: #e9ecef; /* Ash color for the table */
-            width: 100%;
-            margin-top: 20px;
-        }
-        .table th {
-            background-color: #343a40; /* Black color for column headers */
-            color: white;
-        }
-        .table td {
-            background-color: #f8f9fa; /* Light background for data cells */
-        }
-        .form-control {
-            margin-bottom: 10px;
-        }
-        .btn-custom {
-            background-color: #007bff;
-            color: white;
-            border: none;
-        }
-        .btn-custom:hover {
-            background-color: #0056b3;
-        }
-        .btn-sm {
-            padding: 5px 10px;
-        }
-        .actions form {
-            display: inline-block;
-            margin-right: 10px;
-        }
-        .add-form {
-            max-width: 500px; /* Limit the width of the insert form */
-            margin-top: 30px;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <h1>Saved Recipes</h1>
-
-        <!-- Table of saved recipes -->
-        <table class="table table-bordered">
-            <thead>
-                <tr>
-                    <th>SavedID</th>
-                    <th>UserID</th>
-                    <th>Username</th>
-                    <th>RecipeID</th>
-                    <th>Recipe Name</th>
-                    <th>SaveDate</th>
-                    <th>Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                <?php foreach ($savedRecipes as $saved): ?>
-                    <tr>
-                        <td><?php echo htmlspecialchars($saved['SavedID']); ?></td>
-                        <td><?php echo htmlspecialchars($saved['UserID']); ?></td>
-                        <td><?php
-                            // Find the username based on UserID
-                            $user = array_filter($users, function ($u) use ($saved) {
-                                return $u['UserID'] == $saved['UserID'];
-                            });
-                            echo htmlspecialchars(array_shift($user)['Username']);
-                        ?></td>
-                        <td><?php echo htmlspecialchars($saved['RecipeID']); ?></td>
-                        <td><?php
-                            // Find the recipe name based on RecipeID
-                            $recipe = array_filter($recipes, function ($r) use ($saved) {
-                                return $r['RecipeID'] == $saved['RecipeID'];
-                            });
-                            echo htmlspecialchars(array_shift($recipe)['Name']);
-                        ?></td>
-                        <td><?php echo htmlspecialchars($saved['SaveDate']); ?></td>
-                        <td class="actions">
-                            <!-- Edit form -->
-                            <form action="" method="POST">
-                                <input type="hidden" name="action" value="edit">
-                                <input type="hidden" name="savedID" value="<?php echo $saved['SavedID']; ?>">
-                                <select name="userID" required class="form-control">
-                                    <?php foreach ($users as $user): ?>
-                                        <option value="<?php echo $user['UserID']; ?>" 
-                                            <?php echo ($user['UserID'] == $saved['UserID']) ? 'selected' : ''; ?>>
-                                            <?php echo htmlspecialchars($user['Username']); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <select name="recipeID" required class="form-control">
-                                    <?php foreach ($recipes as $recipe): ?>
-                                        <option value="<?php echo $recipe['RecipeID']; ?>" 
-                                            <?php echo ($recipe['RecipeID'] == $saved['RecipeID']) ? 'selected' : ''; ?>>
-                                            <?php echo htmlspecialchars($recipe['Name']); ?>
-                                        </option>
-                                    <?php endforeach; ?>
-                                </select>
-                                <button type="submit" class="btn btn-warning btn-sm">Update</button>
-                            </form>
-
-                            <!-- Delete form -->
-                            <form action="" method="POST">
-                                <input type="hidden" name="action" value="delete">
-                                <input type="hidden" name="savedID" value="<?php echo $saved['SavedID']; ?>">
-                                <button type="submit" class="btn btn-danger btn-sm">Delete</button>
-                            </form>
-                        </td>
-                    </tr>
+    <section class="mb-5">
+        <div class="section-heading">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-heart"></i> Mine</span>
+                <h2 class="section-title">Your saved recipes</h2>
+            </div>
+        </div>
+        <?php if (empty($mySavedRecipes)): ?>
+            <div class="empty-state">You have not saved any recipes yet. Browse recipes and tap save on the detail page.</div>
+        <?php else: ?>
+            <div class="cards-grid">
+                <?php foreach ($mySavedRecipes as $recipe): ?>
+                    <article class="recipe-card">
+                        <img class="recipe-thumb" src="<?php echo e(recipe_image($recipe['ImagePath'] ?? null)); ?>" alt="<?php echo e($recipe['Name']); ?>">
+                        <div class="recipe-card-body">
+                            <div class="recipe-meta">
+                                <?php if (!empty($recipe['Region'])): ?><span class="meta-pill"><?php echo e($recipe['Region']); ?></span><?php endif; ?>
+                                <?php if (!empty($recipe['CuisineType'])): ?><span class="meta-pill"><?php echo e($recipe['CuisineType']); ?></span><?php endif; ?>
+                            </div>
+                            <h3 class="recipe-title"><?php echo e($recipe['Name']); ?></h3>
+                            <p class="muted-text flex-grow-1"><?php echo e(truncate_text($recipe['Description'] ?? '', 120)); ?></p>
+                            <div class="d-flex align-items-center justify-content-between mb-3">
+                                <span><?php echo render_stars((float)$recipe['AvgRating']); ?></span>
+                                <span class="small muted-text">Saved <?php echo e($recipe['SaveDate']); ?></span>
+                            </div>
+                            <div class="d-flex gap-2 mt-auto">
+                                <a class="btn btn-primary" href="recipe_detail.php?id=<?php echo (int)$recipe['RecipeID']; ?>">View</a>
+                                <form method="post" class="js-confirm-delete">
+                                    <?php echo csrf_field(); ?>
+                                    <input type="hidden" name="action" value="delete">
+                                    <input type="hidden" name="savedID" value="<?php echo (int)$recipe['SavedID']; ?>">
+                                    <button class="btn btn-outline-danger" type="submit">Unsave</button>
+                                </form>
+                            </div>
+                        </div>
+                    </article>
                 <?php endforeach; ?>
-            </tbody>
-        </table>
+            </div>
+        <?php endif; ?>
+    </section>
 
-        <!-- Form to add a new saved recipe -->
-        <h2>Add Saved Recipe</h2>
-        <form action="" method="POST" class="add-form">
+    <section class="form-card mb-5">
+        <h2 class="h4 fw-bold mb-3">Add saved recipe record</h2>
+        <form method="post" class="row g-3">
+            <?php echo csrf_field(); ?>
             <input type="hidden" name="action" value="add">
-            
-            <!-- UserID Dropdown -->
-            <div class="form-group">
-                <label for="userID">User</label>
-                <select name="userID" id="userID" required class="form-control">
+            <div class="col-md-5">
+                <label class="form-label" for="userID">User</label>
+                <select class="form-select" id="userID" name="userID" required>
                     <?php foreach ($users as $user): ?>
-                        <option value="<?php echo $user['UserID']; ?>"><?php echo htmlspecialchars($user['Username']); ?></option>
+                        <option value="<?php echo (int)$user['UserID']; ?>" <?php echo (int)$user['UserID'] === $currentUserId ? 'selected' : ''; ?>><?php echo e($user['Username']); ?> (<?php echo e($user['Email']); ?>)</option>
                     <?php endforeach; ?>
                 </select>
             </div>
-
-            <!-- RecipeID Dropdown -->
-            <div class="form-group">
-                <label for="recipeID">Recipe</label>
-                <select name="recipeID" id="recipeID" required class="form-control">
+            <div class="col-md-5">
+                <label class="form-label" for="recipeID">Recipe</label>
+                <select class="form-select" id="recipeID" name="recipeID" required>
                     <?php foreach ($recipes as $recipe): ?>
-                        <option value="<?php echo $recipe['RecipeID']; ?>"><?php echo htmlspecialchars($recipe['Name']); ?></option>
+                        <option value="<?php echo (int)$recipe['RecipeID']; ?>"><?php echo e($recipe['Name']); ?></option>
                     <?php endforeach; ?>
                 </select>
             </div>
-
-            <button type="submit" class="btn btn-custom">Save Recipe</button>
+            <div class="col-md-2 d-flex align-items-end">
+                <button class="btn btn-primary w-100" type="submit">Save</button>
+            </div>
         </form>
-    </div>
+    </section>
 
-    <!-- Bootstrap JS and dependencies -->
-    <script src="https://cdn.jsdelivr.net/npm/@popperjs/core@2.9.3/dist/umd/popper.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0-alpha1/dist/js/bootstrap.min.js"></script>
-</body>
-</html>
+    <section>
+        <div class="section-heading">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-list"></i> Records</span>
+                <h2 class="section-title">All saved recipe records</h2>
+            </div>
+        </div>
+
+        <?php if (empty($savedRecords)): ?>
+            <div class="empty-state">No saved recipe records exist yet.</div>
+        <?php else: ?>
+            <div class="table-responsive table-modern">
+                <table class="table align-middle mb-0">
+                    <thead>
+                        <tr>
+                            <th>ID</th>
+                            <th>User</th>
+                            <th>Recipe</th>
+                            <th>Saved date</th>
+                            <th>Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <?php foreach ($savedRecords as $record): ?>
+                            <tr>
+                                <td>#<?php echo (int)$record['SavedID']; ?></td>
+                                <td><?php echo e($record['Username'] ?? 'Unknown user'); ?></td>
+                                <td class="fw-bold"><?php echo e($record['RecipeName'] ?? 'Unknown recipe'); ?></td>
+                                <td><?php echo e($record['SaveDate']); ?></td>
+                                <td>
+                                    <div class="d-flex flex-wrap gap-2">
+                                        <button class="btn btn-sm btn-outline-secondary" type="button" data-bs-toggle="collapse" data-bs-target="#editSaved<?php echo (int)$record['SavedID']; ?>">Edit</button>
+                                        <form method="post" class="js-confirm-delete">
+                                            <?php echo csrf_field(); ?>
+                                            <input type="hidden" name="action" value="delete">
+                                            <input type="hidden" name="savedID" value="<?php echo (int)$record['SavedID']; ?>">
+                                            <button class="btn btn-sm btn-outline-danger" type="submit">Delete</button>
+                                        </form>
+                                    </div>
+                                </td>
+                            </tr>
+                            <tr class="collapse" id="editSaved<?php echo (int)$record['SavedID']; ?>">
+                                <td colspan="5">
+                                    <form method="post" class="row g-2">
+                                        <?php echo csrf_field(); ?>
+                                        <input type="hidden" name="action" value="edit">
+                                        <input type="hidden" name="savedID" value="<?php echo (int)$record['SavedID']; ?>">
+                                        <div class="col-md-5">
+                                            <select class="form-select" name="userID" required>
+                                                <?php foreach ($users as $user): ?>
+                                                    <option value="<?php echo (int)$user['UserID']; ?>" <?php echo (int)$user['UserID'] === (int)$record['UserID'] ? 'selected' : ''; ?>><?php echo e($user['Username']); ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-5">
+                                            <select class="form-select" name="recipeID" required>
+                                                <?php foreach ($recipes as $recipe): ?>
+                                                    <option value="<?php echo (int)$recipe['RecipeID']; ?>" <?php echo (int)$recipe['RecipeID'] === (int)$record['RecipeID'] ? 'selected' : ''; ?>><?php echo e($recipe['Name']); ?></option>
+                                                <?php endforeach; ?>
+                                            </select>
+                                        </div>
+                                        <div class="col-md-2"><button class="btn btn-primary btn-sm w-100" type="submit">Save</button></div>
+                                    </form>
+                                </td>
+                            </tr>
+                        <?php endforeach; ?>
+                    </tbody>
+                </table>
+            </div>
+        <?php endif; ?>
+    </section>
+</div>
+
+<?php require __DIR__ . '/footer.php'; ?>

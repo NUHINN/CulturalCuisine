@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 600" role="img" aria-labelledby="title desc">
+  <title id="title">Recipe placeholder</title>
+  <desc id="desc">A warm illustrated bowl with cultural food patterns.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" x2="1" y1="0" y2="1">
+      <stop offset="0" stop-color="#fff4df"/>
+      <stop offset="0.55" stop-color="#ffd49f"/>
+      <stop offset="1" stop-color="#e86422"/>
+    </linearGradient>
+    <pattern id="pattern" width="72" height="72" patternUnits="userSpaceOnUse">
+      <path d="M0 36h72M36 0v72" stroke="#ffffff" stroke-opacity=".18" stroke-width="4"/>
+      <circle cx="36" cy="36" r="10" fill="#2f7d57" fill-opacity=".16"/>
+    </pattern>
+  </defs>
+  <rect width="960" height="600" fill="url(#bg)"/>
+  <rect width="960" height="600" fill="url(#pattern)"/>
+  <circle cx="760" cy="120" r="95" fill="#2f7d57" fill-opacity=".18"/>
+  <circle cx="175" cy="500" r="135" fill="#b8322a" fill-opacity=".18"/>
+  <ellipse cx="480" cy="375" rx="250" ry="78" fill="#6b3f25" fill-opacity=".24"/>
+  <path d="M250 290h460c-18 115-111 195-230 195S268 405 250 290Z" fill="#fff8ec"/>
+  <path d="M232 280c0-37 111-67 248-67s248 30 248 67-111 67-248 67-248-30-248-67Z" fill="#b8322a"/>
+  <path d="M275 275c35-25 108-42 205-42s170 17 205 42c-35 25-108 42-205 42s-170-17-205-42Z" fill="#f6a21a"/>
+  <path d="M365 232c-16-38 32-48 12-86M466 218c-21-48 44-58 17-113M580 232c-15-37 31-46 13-82" fill="none" stroke="#ffffff" stroke-opacity=".78" stroke-width="16" stroke-linecap="round"/>
+  <circle cx="390" cy="280" r="18" fill="#2f7d57"/>
+  <circle cx="505" cy="260" r="14" fill="#fff8ec"/>
+  <circle cx="585" cy="292" r="16" fill="#b8322a"/>
+</svg>

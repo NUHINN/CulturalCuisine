@@ -1,335 +1,193 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) session_start();
-require_once 'dbconnect.php';
+require_once __DIR__ . '/auth.php';
 
-// ----- password change handler -----
-$pw_message = '';
-if (isset($_POST['sb_action']) && $_POST['sb_action'] === 'change_password') {
-    if (!isset($_SESSION['user_id'])) {
-        $pw_message = 'You need to log in first.';
-    } else {
-        $userId = (int)$_SESSION['user_id'];
-        $current  = $_POST['current_password'] ?? '';
-        $new      = $_POST['new_password'] ?? '';
-        $confirm  = $_POST['confirm_password'] ?? '';
+$user = current_user();
 
-        if ($new !== $confirm) {
-            $pw_message = 'New password and confirmation do not match.';
-        } elseif (strlen($new) < 6) {
-            $pw_message = 'Password must be at least 6 characters.';
-        } else {
-            $hashCurrent = md5($current);
-            $stmt = $conn->prepare("SELECT UserID FROM users WHERE UserID=? AND PasswordHash=? LIMIT 1");
-            $stmt->bind_param('is', $userId, $hashCurrent);
-            $stmt->execute(); $stmt->store_result();
-            if ($stmt->num_rows === 1) {
-                $stmt->close();
-                $hashNew = md5($new);
-                $up = $conn->prepare("UPDATE users SET PasswordHash=? WHERE UserID=?");
-                $up->bind_param('si',$hashNew,$userId);
-                if ($up->execute()) $pw_message = 'Password updated successfully.';
-                else $pw_message = 'Could not update password.';
-                $up->close();
-            } else {
-                $pw_message = 'Current password is incorrect.';
-            }
-        }
-    }
-}
+$stats = [
+    'recipes' => (int)(fetch_one_prepared('SELECT COUNT(*) AS total FROM recipes')['total'] ?? 0),
+    'regions' => (int)(fetch_one_prepared("SELECT COUNT(DISTINCT Region) AS total FROM recipes WHERE Region IS NOT NULL AND Region <> ''")['total'] ?? 0),
+    'reviews' => (int)(fetch_one_prepared('SELECT COUNT(*) AS total FROM reviews')['total'] ?? 0),
+    'saved' => (int)(fetch_one_prepared('SELECT COUNT(*) AS total FROM savedrecipes')['total'] ?? 0),
+];
+
+$createdOrder = db_has_column('recipes', 'CreatedAt') ? 'r.CreatedAt DESC,' : '';
+$featuredRecipes = fetch_all_prepared(
+    'SELECT ' . recipe_select_columns('r') . ',
+        COALESCE((SELECT AVG(rv.Rating) FROM reviews rv WHERE rv.RecipeID = r.RecipeID), 0) AS AvgRating,
+        (SELECT COUNT(*) FROM reviews rv WHERE rv.RecipeID = r.RecipeID) AS ReviewCount,
+        (SELECT GROUP_CONCAT(DISTINCT t.TagName ORDER BY t.TagName SEPARATOR ",") FROM recipetags t WHERE t.RecipeID = r.RecipeID) AS Tags
+     FROM recipes r
+     ORDER BY AvgRating DESC, ' . $createdOrder . ' r.RecipeID DESC
+     LIMIT 6'
+);
+
+$popularCuisines = fetch_all_prepared(
+    "SELECT CuisineType, COUNT(*) AS Total
+     FROM recipes
+     WHERE CuisineType IS NOT NULL AND CuisineType <> ''
+     GROUP BY CuisineType
+     ORDER BY Total DESC, CuisineType ASC
+     LIMIT 6"
+);
+
+$dashboardCards = [
+    ['Recipe.php', 'Manage Recipes', 'Create image-rich recipe records.', 'fa-utensils'],
+    ['Ingredients.php', 'Ingredients', 'Map ingredients, measurements, and substitutes.', 'fa-carrot'],
+    ['CulturalDetails.php', 'Culture Notes', 'Document history, festivals, and significance.', 'fa-earth-asia'],
+    ['search.php', 'Browse & Filter', 'Search by name, region, cuisine, tags, and rating.', 'fa-magnifying-glass'],
+    ['savedrecipe.php', 'Saved Recipes', 'Review saved collections and user bookmarks.', 'fa-bookmark'],
+    ['profile.php', 'Profile', 'Update your profile image, bio, and account details.', 'fa-id-card'],
+];
+
+$pageTitle = 'Home | ' . APP_NAME;
+require __DIR__ . '/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Homepage</title>
-    <link href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
-    <style>
-        body {
-            font-family: 'Roboto', sans-serif;
-            margin: 0;
-            padding: 0;
-            background: linear-gradient(120deg, #ffcc00, #ff9900);
-            background-size: cover;
-            background-attachment: fixed;
-        }
 
-        header {
-            background: linear-gradient(120deg, #ffcc00, #ff9900);
-            color: #fff;
-            padding: 10px 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.2);
-        }
-
-        header .logo {
-            font-size: 24px;
-            font-weight: bold;
-            color: #000;
-        }
-
-        header .nav-buttons {
-            display: flex;
-            gap: 15px;
-        }
-
-        header .nav-buttons a {
-            color: #fff;
-            text-decoration: none;
-            padding: 8px 16px;
-            background-color: #333;
-            border-radius: 5px;
-            font-size: 14px;
-            transition: background-color 0.3s ease;
-        }
-
-        header .nav-buttons a:hover {
-            background-color: #444;
-        }
-
-        .container {
-            max-width: 1200px;
-            margin: 50px auto;
-            text-align: center;
-        }
-
-        h1 {
-            font-size: 48px;
-            color: #333;
-            margin-bottom: 20px;
-            text-shadow: 2px 2px 5px rgba(0, 0, 0, 0.3);
-        }
-
-        h1 .highlight {
-            color: #ff9900;
-        }
-
-        .box-container {
-            display: flex;
-            flex-wrap: wrap;
-            justify-content: center;
-            margin-top: 40px;
-        }
-
-        .box {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            width: 180px;
-            height: 180px;
-            margin: 15px;
-            background-color: #fff;
-            color: #333;
-            text-align: center;
-            font-size: 18px;
-            text-transform: capitalize;
-            text-decoration: none;
-            border-radius: 10px;
-            box-shadow: 0 8px 15px rgba(0, 0, 0, 0.2);
-            transition: all 0.3s ease;
-            padding: 20px;
-        }
-
-        .box i {
-            font-size: 36px;
-            margin-bottom: 10px;
-            color: #ff9900;
-        }
-
-        .box:hover {
-            background-color: #ffcc00;
-            color: #fff;
-            transform: translateY(-5px);
-            box-shadow: 0 12px 20px rgba(0, 0, 0, 0.4);
-        }
-
-        .about {
-            background-color: #fff;
-            padding: 40px 20px;
-            margin: 50px auto;
-            border-radius: 10px;
-            box-shadow: 0 4px 10px rgba(0, 0, 0, 0.2);
-            max-width: 800px;
-        }
-
-        .about h2 { font-size: 32px; color: #333; margin-bottom: 20px; }
-        .about p { font-size: 16px; color: #555; line-height: 1.6; }
-
-        footer {
-            background-color: #333;
-            color: #fff;
-            padding: 20px 0;
-            text-align: center;
-            margin-top: 40px;
-        }
-
-        footer .social-icons { margin-top: 10px; }
-        footer .social-icons a {
-            color: #ffcc00;
-            font-size: 24px;
-            margin: 0 10px;
-            text-decoration: none;
-            transition: color 0.3s ease;
-        }
-        footer .social-icons a:hover { color: #ff9900; }
-        footer .footer-text { margin-top: 10px; font-size: 14px; }
-
-        /* Sidebar */
-        .sb-hamburger {
-          position: fixed; left: 16px; top: 16px; z-index: 1001;
-          width: 42px; height: 42px; border-radius: 10px;
-          background: #4CAF50; color: #fff; border: none; cursor: pointer;
-          display: grid; place-items: center; box-shadow: 0 6px 16px rgba(76,175,80,.35);
-        }
-        .sb-hamburger span, .sb-hamburger span::before, .sb-hamburger span::after {
-          content:""; display:block; width:20px; height:2px; background:#fff; position:relative;
-        }
-        .sb-hamburger span::before { position:absolute; top:-6px; }
-        .sb-hamburger span::after { position:absolute; top:6px; }
-
-        .sb-overlay {
-          position:fixed; inset:0; background:rgba(0,0,0,.35); z-index:1000;
-          opacity:0; visibility:hidden; transition:.25s;
-        }
-        .sb-overlay.sb-open { opacity:1; visibility:visible; }
-
-        .sb-sidebar {
-          position:fixed; left:0; top:0; bottom:0; width:280px; z-index:1001;
-          background:#fff; transform:translateX(-100%); transition:transform .28s ease;
-          box-shadow:6px 0 24px rgba(0,0,0,.12); padding:18px;
-        }
-        .sb-sidebar.sb-open { transform:translateX(0); }
-
-        .sb-menu { display:flex; flex-direction:column; gap:6px; }
-        .sb-link { text-decoration:none; color:#333; padding:10px; border-radius:8px; }
-        .sb-link:hover { background:#e8f5e9; }
-        .sb-btn { margin-top:10px;width:100%;padding:10px;border:none;border-radius:8px;background:#4CAF50;color:#fff;cursor:pointer; }
-        .sb-status-ok {color:#2e7d32;margin-top:8px;}
-        .sb-status-err{color:#b00020;margin-top:8px;}
-    </style>
-</head>
-<body>
-
-<!-- hamburger -->
-<button class="sb-hamburger" id="sbOpenBtn"><span></span></button>
-<div class="sb-overlay" id="sbOverlay"></div>
-
-<!-- sidebar -->
-<aside class="sb-sidebar" id="sbSidebar">
-  <h3 style="margin-top:0;color:#4CAF50;">Menu</h3>
-  <nav class="sb-menu">
-    <a class="sb-link" href="homepage.php">Home</a>
-    <a class="sb-link" href="profile.php">Profile</a>
-    <a class="sb-link" href="Recipe.php">Recipes</a>
-    <a class="sb-link" href="savedrecipe.php">Saved Recipes</a>
-    <a class="sb-link" href="reviews.php">Reviews</a>
-    <a class="sb-link" href="changepassword.php">Change Password</a>
-    <a class="sb-link" href="index.php">Logout</a>
-  </nav>
-
-  
-  <?php if (!isset($_SESSION['user_id'])): ?>
-    <p>You must <a href="index.php">log in</a> first.</p>
-  <?php else: ?>
-    
-      <?php if($pw_message): ?>
-        <div class="<?php echo stripos($pw_message,'success')!==false?'sb-status-ok':'sb-status-err'; ?>">
-          <?php echo htmlspecialchars($pw_message); ?>
+<section class="hero">
+    <div class="hero-inner">
+        <span class="eyebrow"><i class="fa-solid fa-mortar-pestle"></i> Welcome<?php echo $user ? ', ' . e($user['Username']) : ''; ?></span>
+        <h1 class="display-title mt-3">A richer way to explore cultural cuisine.</h1>
+        <p class="section-copy">Browse recipes, learn their cultural roots, save favorites, and manage the ingredients and stories that make every dish memorable.</p>
+        <div class="hero-actions">
+            <a class="btn btn-primary" href="search.php"><i class="fa-solid fa-magnifying-glass me-2"></i>Browse recipes</a>
+            <a class="btn btn-soft" href="Recipe.php"><i class="fa-solid fa-plus me-2"></i>Add recipe</a>
         </div>
-      <?php endif; ?>
-    </form>
-  <?php endif; ?>
-</aside>
-
-<script>
-(function(){
-  const btn=document.getElementById('sbOpenBtn');
-  const sb=document.getElementById('sbSidebar');
-  const ov=document.getElementById('sbOverlay');
-  function open(){sb.classList.add('sb-open');ov.classList.add('sb-open');}
-  function close(){sb.classList.remove('sb-open');ov.classList.remove('sb-open');}
-  btn.addEventListener('click',open);
-  ov.addEventListener('click',close);
-  document.addEventListener('keydown',e=>{if(e.key==='Escape')close();});
-})();
-</script>
-
-<!-- ==== ORIGINAL CONTENT ==== -->
-
-<!-- Header Section -->
-<header>
-    <div class="logo">_....Cultural Cuisine Explorer</div>
-    <div class="nav-buttons">
-        <a href="contact.php">Contact Us</a>
+        <div class="hero-panel">
+            <span class="meta-pill"><i class="fa-solid fa-map-location-dot"></i><?php echo (int)$stats['regions']; ?> regions</span>
+            <span class="meta-pill"><i class="fa-solid fa-bowl-food"></i><?php echo (int)$stats['recipes']; ?> recipes</span>
+            <span class="meta-pill"><i class="fa-solid fa-star"></i><?php echo (int)$stats['reviews']; ?> reviews</span>
+            <span class="meta-pill"><i class="fa-solid fa-bookmark"></i><?php echo (int)$stats['saved']; ?> saved</span>
+        </div>
     </div>
-</header>
+</section>
 
-<div class="container">
-    <h1>Explore <span class="highlight">Natural</span> and Spicy Cuisine</h1>
+<div class="page-shell">
+    <section class="mb-5">
+        <div class="section-heading">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-chart-simple"></i> Dashboard</span>
+                <h2 class="section-title">Quick actions</h2>
+            </div>
+        </div>
+        <div class="dashboard-grid">
+            <?php foreach ($dashboardCards as [$href, $title, $copy, $icon]): ?>
+                <a class="content-card d-block text-reset" href="<?php echo e($href); ?>">
+                    <div class="d-flex align-items-start gap-3">
+                        <span class="brand-mark"><i class="fa-solid <?php echo e($icon); ?>"></i></span>
+                        <div>
+                            <h3 class="h5 fw-bold mb-1"><?php echo e($title); ?></h3>
+                            <p class="muted-text mb-0"><?php echo e($copy); ?></p>
+                        </div>
+                    </div>
+                </a>
+            <?php endforeach; ?>
+        </div>
+    </section>
 
-    <div class="box-container">
-        <a href="profile.php" class="box">
-            <i class="fas fa-user"></i>
-            <div class="box-title">My Profile</div>
-            
+    <section class="mb-5">
+        <div class="stats-grid">
+            <div class="stat-card">
+                <div class="stat-value"><?php echo (int)$stats['recipes']; ?></div>
+                <div class="stat-label">Recipes cataloged</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value"><?php echo (int)$stats['regions']; ?></div>
+                <div class="stat-label">Regions represented</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value"><?php echo (int)$stats['reviews']; ?></div>
+                <div class="stat-label">Community reviews</div>
+            </div>
+            <div class="stat-card">
+                <div class="stat-value"><?php echo (int)$stats['saved']; ?></div>
+                <div class="stat-label">Saved recipes</div>
+            </div>
+        </div>
+    </section>
 
-        <a href="recipe.php" class="box">
-            <i class="fas fa-utensils"></i>
-            <div class="box-title">Recipes</div>
-        </a>
+    <section class="mb-5">
+        <div class="section-heading">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-fire"></i> Featured</span>
+                <h2 class="section-title">Top recipes</h2>
+            </div>
+            <a class="btn btn-outline-primary" href="search.php">View all</a>
+        </div>
 
-        <a href="Ingredients.php" class="box">
-            <i class="fas fa-carrot"></i>
-            <div class="box-title">Ingredients</div>
-        </a>
+        <?php if (empty($featuredRecipes)): ?>
+            <div class="empty-state">No recipes yet. Add your first recipe to bring the homepage to life.</div>
+        <?php else: ?>
+            <div class="cards-grid">
+                <?php foreach ($featuredRecipes as $recipe): ?>
+                    <?php $tags = array_filter(array_map('trim', explode(',', (string)($recipe['Tags'] ?? '')))); ?>
+                    <article class="recipe-card">
+                        <img class="recipe-thumb" src="<?php echo e(recipe_image($recipe['ImagePath'] ?? null)); ?>" alt="<?php echo e($recipe['Name']); ?>">
+                        <div class="recipe-card-body">
+                            <div class="recipe-meta">
+                                <?php if (!empty($recipe['Region'])): ?><span class="meta-pill"><i class="fa-solid fa-location-dot"></i><?php echo e($recipe['Region']); ?></span><?php endif; ?>
+                                <?php if (!empty($recipe['CuisineType'])): ?><span class="meta-pill"><i class="fa-solid fa-bowl-rice"></i><?php echo e($recipe['CuisineType']); ?></span><?php endif; ?>
+                            </div>
+                            <h3 class="recipe-title"><?php echo e($recipe['Name']); ?></h3>
+                            <p class="muted-text flex-grow-1"><?php echo e(truncate_text($recipe['Description'] ?? '', 120)); ?></p>
+                            <div class="d-flex align-items-center justify-content-between gap-2 mb-3">
+                                <span><?php echo render_stars((float)$recipe['AvgRating']); ?></span>
+                                <span class="small muted-text"><?php echo number_format((float)$recipe['AvgRating'], 1); ?> (<?php echo (int)$recipe['ReviewCount']; ?>)</span>
+                            </div>
+                            <div class="d-flex flex-wrap gap-2 mb-3">
+                                <?php foreach (array_slice($tags, 0, 3) as $tag): ?>
+                                    <span class="tag-pill"><?php echo e($tag); ?></span>
+                                <?php endforeach; ?>
+                            </div>
+                            <a class="btn btn-primary mt-auto" href="recipe_detail.php?id=<?php echo (int)$recipe['RecipeID']; ?>">View details</a>
+                        </div>
+                    </article>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </section>
 
-        <a href="CulturalDetails.php" class="box">
-            <i class="fas fa-globe"></i>
-            <div class="box-title">Cultural Details</div>
-        </a>
+    <section class="mb-5">
+        <div class="section-heading">
+            <div>
+                <span class="eyebrow"><i class="fa-solid fa-globe"></i> Popular cuisines</span>
+                <h2 class="section-title">Where the table travels</h2>
+            </div>
+        </div>
+        <?php if (empty($popularCuisines)): ?>
+            <div class="empty-state">Cuisine types will appear here as recipes are added.</div>
+        <?php else: ?>
+            <div class="dashboard-grid">
+                <?php foreach ($popularCuisines as $cuisine): ?>
+                    <a class="stat-card text-reset" href="search.php?cuisine=<?php echo urlencode((string)$cuisine['CuisineType']); ?>">
+                        <div class="d-flex align-items-center justify-content-between">
+                            <div>
+                                <div class="stat-value fs-2"><?php echo (int)$cuisine['Total']; ?></div>
+                                <div class="stat-label"><?php echo e($cuisine['CuisineType']); ?></div>
+                            </div>
+                            <span class="brand-mark"><i class="fa-solid fa-arrow-right"></i></span>
+                        </div>
+                    </a>
+                <?php endforeach; ?>
+            </div>
+        <?php endif; ?>
+    </section>
 
-        <a href="savedrecipe.php" class="box">
-            <i class="fas fa-bookmark"></i>
-            <div class="box-title">Saved Recipes</div>
-        </a>
-
-        <a href="Reviews.php" class="box">
-            <i class="fas fa-star"></i>
-            <div class="box-title">Reviews</div>
-        </a>
-
-        <a href="RecipeTags.php" class="box">
-            <i class="fas fa-tags"></i>
-            <div class="box-title">Recipe Tags</div>
-        </a>
-
-        <a href="search.php" class="box">
-            <i class="fas fa-search"></i>
-            <div class="box-title">Search Recipies</div>
-        </a>
-    </div>
-
-    <div class="about">
-        <h2>About Us</h2>
-        <p>Cultural Cuisine Explorer is your go-to platform for discovering delicious and authentic recipes from various cultures around the world. We bring you a rich collection of recipes, ingredients, and cultural details to inspire your culinary journey. Whether you are a seasoned chef or an aspiring cook, our website provides the tools and knowledge to help you explore and enjoy the diverse flavors of global cuisine.</p>
-    </div>
+    <section class="content-card">
+        <div class="row align-items-center g-4">
+            <div class="col-lg-7">
+                <span class="eyebrow"><i class="fa-solid fa-seedling"></i> About</span>
+                <h2 class="section-title mt-2">Built for recipes with context.</h2>
+                <p class="section-copy mb-0">Cultural Cuisine Explorer connects each dish with ingredients, origins, festivals, significance, reviews, and personal saved lists. It is designed to feel like a real food culture product while keeping the original PHP and MySQL foundation intact.</p>
+            </div>
+            <div class="col-lg-5">
+                <div class="info-list">
+                    <div class="info-item"><strong>Explore</strong> Search recipes by name, culture, tags, and rating.</div>
+                    <div class="info-item"><strong>Document</strong> Keep ingredient and cultural detail records organized.</div>
+                    <div class="info-item"><strong>Personalize</strong> Save recipes and update your profile.</div>
+                </div>
+            </div>
+        </div>
+    </section>
 </div>
 
-<footer>
-    <div class="social-icons">
-        <a href="#" class="fab fa-facebook-f"></a>
-        <a href="#" class="fab fa-twitter"></a>
-        <a href="#" class="fab fa-instagram"></a>
-        <a href="#" class="fab fa-linkedin-in"></a>
-    </div>
-    <div class="footer-text">
-        &copy; 2025 Cultural Cuisine Explorer. All Rights Reserved.
-    </div>
-</footer>
-
-</body>
-</html>
+<?php require __DIR__ . '/footer.php'; ?>

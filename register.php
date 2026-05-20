@@ -1,49 +1,52 @@
-<?php 
+<?php
+require_once __DIR__ . '/functions.php';
 
-include 'dbconnect.php';
-
-if(isset($_POST['signUp'])){
-    $Username=$_POST['fName'];
-    $email=$_POST['email'];
-    $password=$_POST['password'];
-    $password=md5($password);
-
-     $checkEmail="SELECT * From users where email='$email'";
-     $result=$conn->query($checkEmail);
-     if($result->num_rows>0){
-        echo "Email Address Already Exists !";
-     }
-     else{
-        $insertQuery="INSERT INTO users(Username,email,passwordHash)
-                       VALUES ('$Username','$email','$password')";
-            if($conn->query($insertQuery)==TRUE){
-                header("location: index.php");
-            }
-            else{
-                echo "Error:".$conn->error;
-            }
-     }
-   
-
+if ($_SERVER['REQUEST_METHOD'] !== 'POST' || !isset($_POST['signUp'])) {
+    redirect('index.php');
 }
 
-if(isset($_POST['signIn'])){
-   $email=$_POST['email'];
-   $password=$_POST['password'];
-   $password=md5($password) ;
-   
-   $sql="SELECT * FROM users WHERE email='$email' and passwordHash='$password'";
-   $result=$conn->query($sql);
-   if($result->num_rows>0){
-    session_start();
-    $row=$result->fetch_assoc();
-    $_SESSION['email']=$row['email'];
-    header("Location: homepage.php");
-    exit();
-   }
-   else{
-    echo "Not Found, Incorrect Email or Password";
-   }
+require_csrf();
 
+$username = clean_text($_POST['fName'] ?? '', 50);
+$email = strtolower(clean_text($_POST['email'] ?? '', 100));
+$password = (string)($_POST['password'] ?? '');
+$confirmPassword = (string)($_POST['confirm_password'] ?? '');
+
+$_SESSION['auth_tab'] = 'signup';
+
+if (text_length($username) < 2) {
+    flash('danger', 'Username must be at least 2 characters.');
+    redirect('index.php');
 }
-?>
+
+if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
+    flash('danger', 'Please enter a valid email address.');
+    redirect('index.php');
+}
+
+if (strlen($password) < 8) {
+    flash('danger', 'Password must be at least 8 characters.');
+    redirect('index.php');
+}
+
+if ($password !== $confirmPassword) {
+    flash('danger', 'Password confirmation does not match.');
+    redirect('index.php');
+}
+
+$existing = fetch_one_prepared('SELECT UserID FROM users WHERE Email = ? LIMIT 1', 's', [$email]);
+if ($existing) {
+    flash('warning', 'An account already exists with that email address.');
+    redirect('index.php');
+}
+
+$passwordHash = password_hash($password, PASSWORD_DEFAULT);
+
+if (run_prepared('INSERT INTO users (Username, Email, PasswordHash) VALUES (?, ?, ?)', 'sss', [$username, $email, $passwordHash])) {
+    unset($_SESSION['auth_tab']);
+    flash('success', 'Account created. You can sign in now.');
+    redirect('index.php');
+}
+
+flash('danger', 'Could not create your account right now. Please try again.');
+redirect('index.php');

@@ -1,115 +1,130 @@
 <?php
-if (session_status() === PHP_SESSION_NONE) session_start();
-require_once 'dbconnect.php';
+require_once __DIR__ . '/functions.php';
 
-$login_error = '';
-// Handle login when the Sign In form is submitted
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['password']) && (isset($_POST['email']) || isset($_POST['username']) || isset($_POST['identifier']))) {
-    // Accept username OR email without changing your form fields
-    $identifier = '';
-    if (isset($_POST['identifier']))      $identifier = trim($_POST['identifier']);
-    elseif (isset($_POST['username']))    $identifier = trim($_POST['username']);
-    elseif (isset($_POST['email']))       $identifier = trim($_POST['email']);
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && ($_POST['action'] ?? '') === 'login') {
+    require_csrf();
 
-    $password = $_POST['password'];
-    // Use MD5 to match your current DB (you can migrate later)
-    $hash = md5($password);
+    $identifier = clean_text($_POST['identifier'] ?? '', 120);
+    $password = (string)($_POST['password'] ?? '');
 
-    // Login via username OR email
-    $stmt = $conn->prepare("SELECT UserID FROM users WHERE (Username = ? OR Email = ?) AND PasswordHash = ? LIMIT 1");
-    $stmt->bind_param('sss', $identifier, $identifier, $hash);
-    $stmt->execute();
-    $res = $stmt->get_result();
-
-    if ($row = $res->fetch_assoc()) {
-        $_SESSION['user_id'] = (int)$row['UserID'];
-        $dest = $_SESSION['redirect_after_login'] ?? 'homepage.php';
-        unset($_SESSION['redirect_after_login']);
-        header("Location: $dest");
-        exit;
-    } else {
-        $login_error = 'Invalid username/email or password.';
-        // (Optional) you can echo $login_error inside your Sign In container if you want to show it.
+    if ($identifier === '' || $password === '') {
+        flash('danger', 'Enter your email or username and password.');
+        redirect('index.php');
     }
-    $stmt->close();
+
+    $user = fetch_one_prepared(
+        'SELECT ' . user_select_columns('u') . ' FROM users u WHERE u.Email = ? OR u.Username = ? LIMIT 1',
+        'ss',
+        [$identifier, $identifier]
+    );
+
+    if ($user && verify_password_compat($password, $user['PasswordHash'] ?? null)) {
+        session_regenerate_id(true);
+        $_SESSION['user_id'] = (int)$user['UserID'];
+
+        if (password_needs_upgrade($user['PasswordHash'] ?? null)) {
+            upgrade_user_password_hash((int)$user['UserID'], $password);
+        }
+
+        $destination = $_SESSION['redirect_after_login'] ?? 'homepage.php';
+        unset($_SESSION['redirect_after_login']);
+        flash('success', 'Welcome back, ' . ($user['Username'] ?? 'explorer') . '.');
+        redirect($destination);
+    }
+
+    flash('danger', 'Invalid username/email or password.');
+    redirect('index.php');
 }
+
+if (is_logged_in() && $_SERVER['REQUEST_METHOD'] !== 'POST') {
+    redirect('homepage.php');
+}
+
+$authTab = $_SESSION['auth_tab'] ?? 'login';
+unset($_SESSION['auth_tab']);
+$pageTitle = 'Sign in | ' . APP_NAME;
+$bodyClass = 'auth-page';
+$hideNav = true;
+$hideFooter = true;
+require __DIR__ . '/header.php';
 ?>
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Register & Login</title>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.5.1/css/all.min.css">
-    <link rel="stylesheet" href="style.css">
-</head>
-<body>
-    <div class="container" id="signup" style="display:none;">
-      <h1 class="form-title">Register</h1>
-      <form method="post" action="register.php">
-        <div class="input-group">
-           <i class="fas fa-user"></i>
-           <input type="text" name="fName" id="fName" placeholder="First Name" required>
-           <label for="fname">First Name</label>
-        </div>
 
-        <div class="input-group">
-            <i class="fas fa-envelope"></i>
-            <input type="email" name="email" id="email" placeholder="Email" required>
-            <label for="email">Email</label>
+<div class="auth-layout">
+    <section class="auth-copy">
+        <span class="eyebrow"><i class="fa-solid fa-pepper-hot"></i> Cultural food stories</span>
+        <h1 class="display-title mt-3">Explore cuisine through flavor, memory, and place.</h1>
+        <p class="section-copy">A polished recipe and culture hub for browsing dishes, saving favorites, reviewing meals, and managing the details behind every tradition.</p>
+        <div class="hero-panel">
+            <span class="meta-pill"><i class="fa-solid fa-utensils"></i> Recipes</span>
+            <span class="meta-pill"><i class="fa-solid fa-earth-asia"></i> Cultural history</span>
+            <span class="meta-pill"><i class="fa-solid fa-star"></i> Reviews</span>
+            <span class="meta-pill"><i class="fa-solid fa-bookmark"></i> Saved collections</span>
         </div>
-        <div class="input-group">
-            <i class="fas fa-lock"></i>
-            <input type="password" name="password" id="password" placeholder="Password" required>
-            <label for="password">Password</label>
-        </div>
-       <input type="submit" class="btn" value="Sign Up" name="signUp">
-      </form>
-      <p class="or">
-        ----------or--------
-      </p>
-      <div class="icons">
-        <i class="fab fa-google"></i>
-        <i class="fab fa-facebook"></i>
-      </div>
-      <div class="links">
-        <p>Already Have Account ?</p>
-        <button id="signInButton">Sign In</button>
-      </div>
-    </div>
+    </section>
 
-    <div class="container" id="signIn">
-        <h1 class="form-title">Sign In</h1>
-        <!-- CHANGED: post back to THIS page so the PHP above can log in -->
-        <form method="post" action="">
-          <div class="input-group">
-              <i class="fas fa-envelope"></i>
-              <!-- Keep your 'email' field name: PHP handles email OR username -->
-              <input type="email" name="email" id="email" placeholder="Email" required>
-              <label for="email">Email</label>
-          </div>
-          <div class="input-group">
-              <i class="fas fa-lock"></i>
-              <input type="password" name="password" id="password" placeholder="Password" required>
-              <label for="password">Password</label>
-          </div>
-          <p class="recover">
-            <a href="#">Recover Password</a>
-          </p>
-         <input type="submit" class="btn" value="Sign In" name="signIn">
-        </form>
-        <p class="or">
-          ----------or--------
-        </p>
-        <div class="icons">
-          <i class="fab fa-google"></i>
-          <i class="fab fa-facebook"></i>
+    <section class="auth-card-wrap">
+        <div class="auth-card">
+            <div class="d-flex align-items-center gap-2 mb-4">
+                <span class="brand-mark"><i class="fa-solid fa-bowl-food"></i></span>
+                <div>
+                    <div class="fw-black fw-bold"><?php echo APP_NAME; ?></div>
+                    <div class="small text-muted">Presentation-ready edition</div>
+                </div>
+            </div>
+
+            <div id="signIn" class="auth-form <?php echo $authTab === 'signup' ? '' : 'active'; ?>">
+                <h2 class="section-title fs-1">Welcome back</h2>
+                <p class="muted-text mb-4">Sign in to manage recipes and keep your favorites close.</p>
+                <form method="post" action="index.php" novalidate>
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="action" value="login">
+                    <div class="mb-3">
+                        <label class="form-label" for="identifier">Email or username</label>
+                        <input class="form-control" type="text" id="identifier" name="identifier" autocomplete="username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="loginPassword">Password</label>
+                        <input class="form-control" type="password" id="loginPassword" name="password" autocomplete="current-password" required>
+                    </div>
+                    <button class="btn btn-primary w-100" type="submit">Sign in</button>
+                </form>
+                <div class="text-center mt-4">
+                    <span class="muted-text">New here?</span>
+                    <button class="btn btn-link fw-bold p-0 align-baseline" type="button" id="signUpButton">Create an account</button>
+                </div>
+            </div>
+
+            <div id="signup" class="auth-form <?php echo $authTab === 'signup' ? 'active' : ''; ?>">
+                <h2 class="section-title fs-1">Create account</h2>
+                <p class="muted-text mb-4">Join the table and start saving food traditions.</p>
+                <form method="post" action="register.php" novalidate>
+                    <?php echo csrf_field(); ?>
+                    <input type="hidden" name="signUp" value="1">
+                    <div class="mb-3">
+                        <label class="form-label" for="fName">Username</label>
+                        <input class="form-control" type="text" name="fName" id="fName" maxlength="50" autocomplete="username" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="signupEmail">Email</label>
+                        <input class="form-control" type="email" name="email" id="signupEmail" maxlength="100" autocomplete="email" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="signupPassword">Password</label>
+                        <input class="form-control" type="password" name="password" id="signupPassword" minlength="8" autocomplete="new-password" required>
+                    </div>
+                    <div class="mb-3">
+                        <label class="form-label" for="confirmPassword">Confirm password</label>
+                        <input class="form-control" type="password" name="confirm_password" id="confirmPassword" minlength="8" autocomplete="new-password" required>
+                    </div>
+                    <button class="btn btn-primary w-100" type="submit">Sign up</button>
+                </form>
+                <div class="text-center mt-4">
+                    <span class="muted-text">Already have an account?</span>
+                    <button class="btn btn-link fw-bold p-0 align-baseline" type="button" id="signInButton">Sign in</button>
+                </div>
+            </div>
         </div>
-        <div class="links">
-          <p>Don't have account yet?</p>
-          <button id="signUpButton">Sign Up</button>
-        </div>
-      </div>
-      <script src="script.js"></script>
-</body>
-</html>
+    </section>
+</div>
+
+<?php require __DIR__ . '/footer.php'; ?>
