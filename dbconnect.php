@@ -1,21 +1,13 @@
 <?php
-// Database connection for Cultural Cuisine Explorer.
-// Update these values if your local XAMPP/phpMyAdmin credentials differ.
-$servername = "localhost";
-$username = "root";
-$password = "";
-$dbname = "culturalcuisineexplorer";
+$servername = getenv("DB_HOST");
+$username = getenv("DB_USER");
+$password = getenv("DB_PASS");
+$dbname = getenv("DB_NAME");
+$port = getenv("DB_PORT");
 
-mysqli_report(MYSQLI_REPORT_OFF);
-
-$conn = new mysqli($servername, $username, $password, $dbname);
+$conn = new mysqli($servername, $username, $password, $dbname, $port);
 
 if ($conn->connect_error) {
-    error_log('Database connection failed: ' . $conn->connect_error);
-    http_response_code(500);
-    die('Database connection failed. Please check your local configuration.');
+    die("Database connection failed. Please check your database configuration.");
 }
-
-if (!$conn->set_charset('utf8mb4')) {
-    error_log('Could not set database charset: ' . $conn->error);
-}
+?>
