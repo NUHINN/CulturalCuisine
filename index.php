@@ -68,7 +68,7 @@ require __DIR__ . '/header.php';
                 <span class="brand-mark"><i class="fa-solid fa-bowl-food"></i></span>
                 <div>
                     <div class="fw-black fw-bold"><?php echo APP_NAME; ?></div>
-                    <div class="small text-muted">Presentation-ready edition</div>
+                    <div class="small text-muted">Cuisine Explorer</div>
                 </div>
             </div>
 
