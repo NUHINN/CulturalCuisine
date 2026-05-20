@@ -232,16 +232,18 @@ function db_has_column(string $table, string $column): bool
         return $cache[$key];
     }
 
-    $stmt = db()->prepare("SHOW COLUMNS FROM `$table` LIKE ?");
-    if (!$stmt) {
+    $tableSafe = "`" . $table . "`";
+    $columnSafe = db()->real_escape_string($column);
+
+    $result = db()->query("SHOW COLUMNS FROM $tableSafe LIKE '$columnSafe'");
+
+    if (!$result) {
         $cache[$key] = false;
         return false;
     }
-    $stmt->bind_param('s', $column);
-    $stmt->execute();
-    $stmt->store_result();
-    $cache[$key] = $stmt->num_rows > 0;
-    $stmt->close();
+
+    $cache[$key] = $result->num_rows > 0;
+    $result->free();
 
     return $cache[$key];
 }
