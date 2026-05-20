@@ -56,7 +56,7 @@ $recipes = fetch_all_prepared(
     'SELECT ' . recipe_select_columns('r') . ',
         COALESCE((SELECT AVG(rv.Rating) FROM reviews rv WHERE rv.RecipeID = r.RecipeID), 0) AS AvgRating,
         (SELECT COUNT(*) FROM reviews rv WHERE rv.RecipeID = r.RecipeID) AS ReviewCount,
-        (SELECT GROUP_CONCAT(DISTINCT t.TagName ORDER BY t.TagName SEPARATOR ",") FROM recipetags t WHERE t.RecipeID = r.RecipeID) AS Tags
+        (SELECT GROUP_CONCAT(DISTINCT t.TagName ORDER BY t.TagName SEPARATOR ',') FROM recipetags t WHERE t.RecipeID = r.RecipeID) AS Tags
      FROM recipes r
      WHERE ' . implode(' AND ', $where) . '
      ORDER BY ' . $orderBy,
